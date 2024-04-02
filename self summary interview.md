@@ -113,6 +113,18 @@ p: processer 处理队列
 
 
 
+### go channel
+
+csp 模型: 不通过共享内存来实现通信, 而是通过通信来实现通信
+
+- 环形数组, recvx, sendx
+- sendq, recvq 用于存放读取和写入goroutine的等待队列, 当channel可读可写时, 会按照链表顺序依次唤醒recvq与sendq中的goroutine
+- lock: 每次操作都没加锁
+
+
+
+
+
 
 
 
@@ -139,11 +151,13 @@ p: processer 处理队列
 
 ### append() 原理
 
+https://blog.csdn.net/e2788666/article/details/130611004
 
+https://tonybai.com/2020/12/17/where-is-the-source-of-builtin-functions/
 
+当扩容时, slice的底层数据会发生变化, 其长度和cap都会变化, 自然就会创建一个新的slice, 如果扩容后原始数组不存在对象引用就会被gc回收
 
-
-
+当不扩容时, slice结构体中len会发生变化, 所以slice会改变, 所以也会返回一个新的slice
 
 
 
@@ -198,9 +212,45 @@ rpc 是一种远程过程调度协议, 他包含传输协议和序列化协议, 
 
 传输协议: tcp, udp, http 都可作为底层传输协议
 
-序列化协议: protobuf, xml, thrift, 
+序列化协议: protobuf, xml, thrift等
 
-rpc 通过函数调用
+rpc 通过函数调用, http 通过url调用实现
+
+grpc 的rpc是通过tcp加http
+
+
+
+
+
+
+
+### rpc 是如何建立连接的
+
+https://juejin.cn/post/7304268951298490418
+
+1. 建立连接
+2. 按网络协议通信
+3. 服务端收到客服端请求然后处理 (BIO, NIO, AIO)
+4. 按序列化结果返回给客服端
+
+#### 建立连接
+
+##### 1.http 通信
+
+- 建立http连接, 依赖于传输层tcp连接
+- 发送请求
+- 接受请求
+- 返回响应
+- 断开连接
+
+
+
+##### 2. socket 通信
+
+- 服务器监听
+- 客户端请求
+- 服务器确认
+- 数据传输
 
 
 
@@ -246,6 +296,12 @@ rpc 通过函数调用
 
 
 
+ipvs 用到的是 iptables 的扩展 ipset, 不是直接调用 iptables 来生成规则链, iptable 规则链是一种带线性的数据结构, 而 ipset 使用的是更高效的数据哈希表, 因此当规则很多时能更有效的查找与匹配
+
+ipvs 支持多种负载均衡算法, 支持服务器健康检测与连接重试
+
+
+
 
 
 
@@ -258,7 +314,11 @@ rpc 通过函数调用
 
 https://www.cnblogs.com/alisystemsoftware/p/16919263.html
 
+describe 查看 pod event
 
+- 初始化失败
+- livenessprobe 失败
+- 容器退出: 查看容器日志
 
 
 
@@ -270,9 +330,23 @@ https://www.cnblogs.com/alisystemsoftware/p/16919263.html
 
 ## istio
 
+https://www.cnblogs.com/BlogNetSpace/p/17325923.html
+
 ### 如何注入 sidecar
 
+在命名空间设置 istio-injection=enabled
 
+istio 会注入两个容器, istio-init, 和 istio-proxy
+
+istio-init: init container 用于设置 iptables 规则，以便将入站/出站流量通过 sidecar 代理
+
+istio-proxy(envoy): 代理容器出入站流量
+
+
+
+自动注入: 依赖 Mutating Admission Webhook
+
+手动注入: 需要手写yaml配置init和siedcar容器
 
 
 
@@ -358,12 +432,16 @@ https://www.cnblogs.com/alisystemsoftware/p/16919263.html
 
 ### 零拷贝
 
-- mmap
+是为了减少cpu数据拷贝
 
-- sendfile
+传统数据拷贝需要将文件通过dma数据拷贝到内核缓存, 在从内核缓存拷贝到用户缓存, 要写时, 要将用户缓存数据拷贝到内核缓存, 在通过dma拷贝到文件或socket
 
-- splice
-- tee
+- mmap : 直接将内核缓存映射到用户缓存
+
+- sendfile : 只需两次dma数据拷贝, 文件数据dma拷贝内核, 内核直接在dma拷贝到另外的文件
+
+- splice : 在内核缓存区建立了一个管道, 该管道可与用户缓存通信, 负责内核缓存区数据交换
+- tee : 
 
 
 
@@ -1088,9 +1166,14 @@ read view 在 rc 下:
 
 ### redis 数据结构
 
-string: (sds) 动态字符串
+- string: (sds) 动态字符串
 
-
+- list: 3.2以后只用quicklist, 3.2以前双向链表或压缩链表实现
+- hash: listpack
+- set: 哈希表, 或(整数数组有条件)
+- zset: listpack 或跳表实现
+- Bitmap: 用 String 类型作为底层数据结构实现的一种统计二值状态的数据类型
+- Stream: 消息队列, 支持 ack 确认消息的模式
 
 
 
@@ -1118,9 +1201,10 @@ string: (sds) 动态字符串
 
 ### 一致性哈希
 
-
-
-
+- 如何分配请求
+- 哈希算法
+- 一致性哈希问题 : 节点分布不均匀
+- 虚拟节点 : 不在将真实节点映射到哈希环, 而是将虚拟节点映射到哈希环, 对于不同的请求, 我们通过算出请求的哈希找到虚拟节点, 在通过虚拟节点找到真实节点
 
 
 
